@@ -10,7 +10,7 @@ all: $(TEST_EXE)
 	./$(TEST_EXE)
 
 # This part is like your cc_library 'srcs'
-$(LIB_OBJ): arena.cpp arena.h
+$(LIB_OBJ): arena.cpp arena.hpp
 	$(CXX) $(CXXFLAGS) -c arena.cpp -o $(LIB_OBJ)
 
 # This part is like your cc_test 'deps'

@@ -1,7 +1,7 @@
 #include <iostream>
 #include <cassert>
 #include <vector>
-#include "arena.h"
+#include "arena.hpp"
 
 void TestBasic() {
     Arena arena;

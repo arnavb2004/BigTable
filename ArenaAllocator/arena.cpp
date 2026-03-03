@@ -1,4 +1,4 @@
-#include "arena.h"
+#include "arena.hpp"
 
 static const int kBlockSize = 4096; // Standard 4KB page size
 
