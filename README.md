@@ -1,6 +1,6 @@
 # BigTable
 
-A high-performance, distributed key-value store inspired by Google's Bigtable paper (https://static.googleusercontent.com/media/research.google.com/en//archive/bigtable-osdi06.pdf).
+A high-performance, distributed key-value store inspired by [Google's Bigtable paper](https://static.googleusercontent.com/media/research.google.com/en//archive/bigtable-osdi06.pdf).
 
 ## Current Progress: Arena Allocator
 
