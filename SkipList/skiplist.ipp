@@ -1,4 +1,6 @@
+#ifndef SKIPLIST_HPP
 #include "skiplist.hpp"
+#endif
 
 template<typename key, typename value, typename Comparator>
 SkipList<key, value, Comparator>::SkipList(Comparator cmp, Arena* const arena) 
