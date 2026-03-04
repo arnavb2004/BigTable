@@ -1,3 +1,6 @@
+#ifndef SKIPLIST_HPP
+#define SKIPLIST_HPP
+
 #include "../ArenaAllocator/arena.hpp"
 #include <atomic>
 
@@ -37,3 +40,4 @@ class SkipList {
 };
 
 #include "skiplist.ipp" // Include the implementation of template methods
+#endif
