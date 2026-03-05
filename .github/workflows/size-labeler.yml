@@ -1,6 +1,5 @@
 name: "PR Size Labeler"
 on: pull_request
-
 jobs:
   label:
     runs-on: ubuntu-latest
@@ -8,8 +7,17 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: pascalgn/size-label-action@v0.5.5
+      - name: Size Labeler
+        uses: pascalgn/size-label-action@v0.5.5
         env:
           GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
         with:
-          sizes: '{"XS": 20, "S": 95, "M": 300, "L": 800, "XL": 1500}'
+          # Using | to ensure the JSON is parsed as a clean block
+          sizes: |
+            {
+              "XS": 20,
+              "S": 100,
+              "M": 300,
+              "L": 800,
+              "XL": 1500
+            }
