@@ -12,4 +12,4 @@ jobs:
         env:
           GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
         with:
-          sizes: '{"XS": 20, "S": 100, "M": 300, "L": 800, "XL": 1500}'
+          sizes: '{"XS": 20, "S": 95, "M": 300, "L": 800, "XL": 1500}'
