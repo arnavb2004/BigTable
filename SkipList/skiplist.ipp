@@ -207,5 +207,48 @@ bool SkipList<key, value, Comparator>::Search(const key& k, value& v) const
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// //TODO : Iterator implementation
+// Iterator implementation
 // ─────────────────────────────────────────────────────────────────────────────
+template<typename key, typename value, typename Comparator>
+SkipList<key, value, Comparator>::Iterator::Iterator(const SkipList* list)
+    : list_(list), node_(nullptr)
+{}
+
+template<typename key, typename value, typename Comparator>
+bool SkipList<key, value, Comparator>::Iterator::Valid() const
+{
+    return node_ != nullptr;
+}
+
+template<typename key, typename value, typename Comparator>
+const key& SkipList<key, value, Comparator>::Iterator::Key() const
+{
+    assert(Valid());
+    return node_->k;
+}
+
+template<typename key, typename value, typename Comparator>
+const value& SkipList<key, value, Comparator>::Iterator::Value() const
+{
+    assert(Valid());
+    return node_->v;
+}
+
+template<typename key, typename value, typename Comparator>
+void SkipList<key, value, Comparator>::Iterator::Next()
+{
+    assert(Valid());
+    node_ = node_->Next(0);
+}
+
+template<typename key, typename value, typename Comparator>
+void SkipList<key, value, Comparator>::Iterator::SeekToFirst()
+{
+    node_ = list_->head_->Next(0);
+}
+
+template<typename key, typename value, typename Comparator>
+void SkipList<key, value, Comparator>::Iterator::Seek(const key& target)
+{
+    node_ = list_->FindGreaterOrEqual(target, nullptr);
+}
