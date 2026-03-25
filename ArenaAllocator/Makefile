@@ -1,21 +1,31 @@
-CXX = g++
-CXXFLAGS = -std=c++17 -Wall
+CXX      := g++
+CXXFLAGS := -std=c++17 -Wall -Wextra -g
 
-# The "Library" output
-LIB_OBJ = arena.o
-# The "Test" output
-TEST_EXE = arena_test
+ifeq ($(OS),Windows_NT)
+    TEST_BIN := arena_test.exe
+    RUN      := arena_test.exe
+    RM       := del /Q
+else
+    TEST_BIN := arena_test
+    RUN      := ./arena_test
+    RM       := rm -f
+endif
 
-all: $(TEST_EXE)
-	./$(TEST_EXE)
+.PHONY: all test clean
 
-# This part is like your cc_library 'srcs'
-$(LIB_OBJ): arena.cpp arena.hpp
-	$(CXX) $(CXXFLAGS) -c arena.cpp -o $(LIB_OBJ)
+all: $(TEST_BIN)
 
-# This part is like your cc_test 'deps'
-$(TEST_EXE): arena_test.cpp $(LIB_OBJ)
-	$(CXX) $(CXXFLAGS) arena_test.cpp $(LIB_OBJ) -o $(TEST_EXE)
+# Compile arena.cpp into a reusable object file.
+# SkipList/Makefile links against this via ../ArenaAllocator/arena.o
+arena.o: arena.cpp arena.hpp
+	$(CXX) $(CXXFLAGS) -c arena.cpp -o arena.o
+
+# Build the test binary
+$(TEST_BIN): arena_test.cpp arena.o
+	$(CXX) $(CXXFLAGS) arena_test.cpp arena.o -o $(TEST_BIN)
+
+test: $(TEST_BIN)
+	$(RUN)
 
 clean:
-	rm -f *.o $(TEST_EXE)
+	$(RM) arena.o $(TEST_BIN)
