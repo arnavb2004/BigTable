@@ -145,7 +145,47 @@ SkipList<key, value, Comparator>::FindLast() const
 template<typename key, typename value, typename Comparator>
 void SkipList<key, value, Comparator>::Insert(const key& k, const value& v)
 {
-    // TODO: implement the insert function
+    // prev[i] will hold the last node on level i whose key < k.
+    Node* prev[kMaxHeight];
+
+    Node* existing = FindGreaterOrEqual(k, prev);
+
+    // If key already exists, update value in-place (upsert semantics).
+    if (existing != nullptr && KeyCompare(existing->k, k) == 0) {
+        existing->v = v;   // serialised by caller's mutex
+        return;
+    }
+
+    // New key: allocate a node and wire it in.
+    const int height = RandomHeight();
+    const int cur_max = max_height_.load(std::memory_order_relaxed);
+
+    if (height > cur_max) {
+        // Levels above cur_max have no prior nodes — head_ is the predecessor.
+        for (int i = cur_max; i < height; ++i) {
+            prev[i] = head_;
+        }
+        // Publish the new height.  Concurrent readers will see at most the old
+        // height until this store; that is safe because the new levels still
+        // point to nullptr at this point.
+        max_height_.store(height, std::memory_order_relaxed);
+    }
+
+    Node* new_node = NewNode(k, v, height);
+
+    // Splice from level 0 up to height-1.
+    // We use relaxed stores for next_ here because the release store into
+    // prev[0]->next_[0] acts as the publication fence for the whole node.
+    for (int i = 0; i < height; ++i) {
+        // new_node->next_[i] = prev[i]->next_[i]
+        new_node->SetNextRelaxed(i, prev[i]->NextRelaxed(i));
+    }
+
+    // Now publish: use release semantics so that readers see the fully
+    // initialised node once they follow this pointer.
+    for (int i = 0; i < height; ++i) {
+        prev[i]->SetNext(i, new_node);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
