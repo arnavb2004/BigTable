@@ -197,7 +197,13 @@ void SkipList<key, value, Comparator>::Insert(const key& k, const value& v)
 template<typename key, typename value, typename Comparator>
 bool SkipList<key, value, Comparator>::Search(const key& k, value& v) const
 {
-    // TODO: implement the search function
+    Node* candidate = FindGreaterOrEqual(k, nullptr);
+
+    if (candidate != nullptr && KeyCompare(candidate->k, k) == 0) {
+        v = candidate->v;   // serialised by acquire on next_ pointer
+        return true;
+    }
+    return false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
