@@ -2,53 +2,164 @@
 #include "skiplist.hpp"
 #endif
 
+#include <cstdlib>  // rand()
+#include <cstring>  // memset (used in NewNode)
+#include <new>      // placement new
+#include <vector>
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NewNode
+//
+// Lays out memory as:
+//   [ Node header (k, v, next_[0]) ][ next_[1] ] ... [ next_[height-1] ]
+//
+// The first next_ slot is baked into the struct; each extra level needs one
+// more std::atomic<Node*> sizeof.  We use placement-new so the Node
+// constructor runs on properly-aligned memory.
+// ─────────────────────────────────────────────────────────────────────────────
 template<typename key, typename value, typename Comparator>
-SkipList<key, value, Comparator>::SkipList(Comparator cmp, Arena* const arena) 
-    : compare_(cmp), arena_(arena), head_(NewNode(key(), value(), kMaxHeight)), max_height_(1) {
-        /* Constructor initializes the skip list with a head node and sets the maximum height to 1.
-        compare_ : The comparator function provided by the user to maintain sorted order.
-        arena_ : Pointer to the custom memory allocator for efficient node allocation.
-        head_ : A sentinel node that serves as the starting point for all levels of the skip list. It is initialized with default key and value.
-        max_height_ : Tracks the current maximum height of the skip list, starting at 1 since we have at least one level (the head). */
+typename SkipList<key, value, Comparator>::Node*
+SkipList<key, value, Comparator>::NewNode(const key& k, const value& v, int height)
+{
+    // Total bytes = base Node size + (height-1) extra atomic pointer slots.
+    const size_t extra = (height - 1) * sizeof(std::atomic<Node*>);
+    const size_t total = sizeof(Node) + extra;
+
+    // Arena::AllocateAligned always uses max(sizeof(void*), 8) = 8-byte alignment,
+    // which is sufficient for Node on all target platforms (alignof(Node) <= 8).
+    char* mem = arena_->AllocateAligned(total);
+
+    // Placement-new: run the Node constructor in our Arena memory.
+    Node* node = new (mem) Node(k, v);
+
+    // Zero-initialise all next_ pointers (including the extra ones).
+    // std::atomic is not trivially zero-initialised in all compilers,
+    // so we explicitly store nullptr into each slot.
+    for (int i = 0; i < height; ++i) {
+        node->SetNextRelaxed(i, nullptr);
+    }
+    return node;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RandomHeight
+//
+// Geometric distribution with p = kBranchProb (0.25).
+// Expected height ≈ 1 / (1 - p) ≈ 1.33.  Very few nodes exceed height 4;
+// reaching kMaxHeight (12) is extremely rare.
+// ─────────────────────────────────────────────────────────────────────────────
 template<typename key, typename value, typename Comparator>
-void SkipList<key, value, Comparator>::Insert(const key& k, const value& v) {
-    /* Inserts a key-value pair into the skip list while maintaining sorted order and skip list properties.
-    
-    k : The key to be inserted.
-    v : The value associated with the key. */
-    // Implementation of insertion logic goes here
+int SkipList<key, value, Comparator>::RandomHeight()
+{
+    int height = 1;
+    // RAND_MAX is at least 32767; comparing against RAND_MAX * 0.25 is fine.
+    while (height < kMaxHeight &&
+           (static_cast<float>(rand()) / static_cast<float>(RAND_MAX)) < kBranchProb) {
+        ++height;
+    }
+    return height;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Constructor
+// ─────────────────────────────────────────────────────────────────────────────
 template<typename key, typename value, typename Comparator>
-bool SkipList<key, value, Comparator>::Search(const key& k, value& v) const {
-    /* Searches for a key in the skip list and retrieves its associated value if found.
-    
-    k : The key to search for.
-    v : A reference to store the value if the key is found. */
-    // Implementation of search logic goes here
-    return false; // Placeholder return value
+SkipList<key, value, Comparator>::SkipList(Comparator cmp, Arena* arena)
+    : compare_(cmp),
+      arena_(arena),
+      head_(NewNode(key{}, value{}, kMaxHeight)),
+      max_height_(1)
+{
+    // head_ is a sentinel — its key is never compared against user keys
+    // during a Search that starts from head_->Next(level).
+    // All next_ pointers are already nullptr (set in NewNode).
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FindGreaterOrEqual
+//
+// Returns the first node whose key >= k.
+// If prev != nullptr, fills prev[level] with the last node on each level
+// whose key < k — i.e. the splice points needed by Insert.
+//
+// This is the core traversal and is called by both Insert and Search.
+// ─────────────────────────────────────────────────────────────────────────────
 template<typename key, typename value, typename Comparator>
-typename SkipList<key, value, Comparator>::Node* SkipList<key, value, Comparator>::NewNode(const key& k, const value& v, int height) {
-    /* Allocates a new node with the specified key, value, and height using the custom memory allocator.
-    
-    k : The key for the new node.
-    v : The value for the new node.
-    height : The height of the new node, which determines how many levels it will occupy in the skip list. */
-    // Implementation of node creation logic goes here
-    return nullptr; // Placeholder return value
+typename SkipList<key, value, Comparator>::Node*
+SkipList<key, value, Comparator>::FindGreaterOrEqual(const key& k, Node** prev) const
+{
+    Node* current = head_;
+    int   level   = max_height_.load(std::memory_order_relaxed) - 1;
+
+    while (true) {
+        Node* next = current->Next(level);
+
+        if (KeyIsLessThan(next, k)) {
+            // next->key < k: advance forward on this level.
+            current = next;
+        } else {
+            // next is nullptr OR next->key >= k: record splice point and drop.
+            if (prev != nullptr) {
+                prev[level] = current;
+            }
+            if (level == 0) {
+                return next; // next is either nullptr or the first node >= k
+            }
+            --level;
+        }
+    }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FindLast
+// ─────────────────────────────────────────────────────────────────────────────
 template<typename key, typename value, typename Comparator>
-int SkipList<key, value, Comparator>::RandomHeight() {
-    /* Generates a random height for a new node based on a probabilistic model.
-    
-    The height is determined by repeatedly flipping a coin (or generating a random number) until it fails, counting the number of successful flips. This method ensures that higher levels are less likely to be occupied, maintaining the skip list's logarithmic properties. */
-    // Implementation of random height generation logic goes here
-    return 1; // Placeholder return value
+typename SkipList<key, value, Comparator>::Node*
+SkipList<key, value, Comparator>::FindLast() const
+{
+    Node* current = head_;
+    int   level   = max_height_.load(std::memory_order_relaxed) - 1;
+
+    while (true) {
+        Node* next = current->Next(level);
+        if (next == nullptr) {
+            if (level == 0) return (current == head_) ? nullptr : current;
+            --level;
+        } else {
+            current = next;
+        }
+    }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Insert
+//
+// Steps:
+//   1. Walk the list to find splice points (prev[]).
+//   2. If the key already exists, atomically update its value and return.
+//   3. Otherwise draw a random height, extend max_height_ if needed,
+//      allocate a new Node, and splice it in from bottom to top.
+//
+// Writer serialisation: the caller must hold a mutex; no internal locking.
+// ─────────────────────────────────────────────────────────────────────────────
+template<typename key, typename value, typename Comparator>
+void SkipList<key, value, Comparator>::Insert(const key& k, const value& v)
+{
+    // TODO: implement the insert function
+}
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Search
+//
+// Uses FindGreaterOrEqual (prev = nullptr → read-only path, no splice needed).
+// Returns true and fills `v` if an exact match is found.
+// ─────────────────────────────────────────────────────────────────────────────
+template<typename key, typename value, typename Comparator>
+bool SkipList<key, value, Comparator>::Search(const key& k, value& v) const
+{
+    // TODO: implement the search function
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// //TODO : Iterator implementation
+// ─────────────────────────────────────────────────────────────────────────────
