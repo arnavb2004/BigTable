@@ -51,10 +51,11 @@ SkipList<key, value, Comparator>::NewNode(const key& k, const value& v, int heig
 template<typename key, typename value, typename Comparator>
 int SkipList<key, value, Comparator>::RandomHeight()
 {
+    thread_local std::mt19937 rng(std::random_device{}());
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+    
     int height = 1;
-    // RAND_MAX is at least 32767; comparing against RAND_MAX * 0.25 is fine.
-    while (height < kMaxHeight &&
-           (static_cast<float>(rand()) / static_cast<float>(RAND_MAX)) < kBranchProb) {
+    while (height < kMaxHeight && dist(rng) < kBranchProb) {
         ++height;
     }
     return height;
