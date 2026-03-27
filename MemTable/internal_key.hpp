@@ -2,6 +2,7 @@
 #define INTERNAL_KEY_HPP
 
 #include <string>
+#include <string_view>
 #include <cstdint>
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,6 +49,11 @@ struct InternalKey {
                 int64_t ts, ValueType t)
         : row(std::move(row)), col(std::move(col)),
           timestamp(ts), type(t) {}
+    
+    // Returns row + '\0' + col.
+    // Null byte is an unambiguous separator — user strings won't contain it.
+    // Used by Memtable::Get to detect when iterator moves past target row/col.
+    std::string UserKey() const;
 
     bool operator==(const InternalKey& o) const {
         return row == o.row && col == o.col &&
@@ -63,7 +69,7 @@ struct InternalKey {
 
     // Decode a binary string produced by Encode() back into an InternalKey.
     // Returns false if the buffer is malformed.
-    static bool Decode(const std::string& encoded, InternalKey& out);
+    static bool Decode(const std::string_view encoded, InternalKey& out);
 };
 
 
