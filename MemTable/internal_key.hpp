@@ -6,8 +6,6 @@
 #include <cstdint>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// internal_key.hpp
-//
 // Defines the Bigtable key schema — the WHAT layer.
 // Knows nothing about SkipList, Arena, or Memtable.
 //

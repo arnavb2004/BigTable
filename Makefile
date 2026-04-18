@@ -16,13 +16,16 @@ endif
 
 .PHONY: all test arena skiplist clean
 
-all: arena skiplist
+all: arena skiplist internalkey
 
 arena:
 	$(MAKE) -C ArenaAllocator
 
 skiplist:
 	$(MAKE) -C SkipList
+
+internalkey:
+	$(MAKE) -C MemTable
 
 test: all
 	@echo ""
@@ -37,6 +40,12 @@ test: all
 	@echo "======================================"
 	$(MAKE) -C SkipList test
 
+	@echo ""
+	@echo "======================================"
+	@echo "  Running InternalKey tests"
+	@echo "======================================"
+	$(MAKE) -C MemTable test
+	
 clean:
 	$(MAKE) -C ArenaAllocator clean
 	$(MAKE) -C SkipList clean

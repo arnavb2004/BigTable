@@ -6,6 +6,7 @@
 #include <cstring>  // memset (used in NewNode)
 #include <new>      // placement new
 #include <vector>
+#include <random>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NewNode
