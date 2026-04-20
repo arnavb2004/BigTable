@@ -146,12 +146,12 @@ cd SkipList
 g++ -std=c++17 -Wall -Wextra -g skiplist_test.cpp ../ArenaAllocator/arena.cpp -o skiplist_test
 ./skiplist_test        # Linux/macOS
 skiplist_test.exe      # Windows (add -lpthread to the command above)
-```
 
 # InternalKey tests (inside MemTable folder)
 cd MemTable
 g++ -std=c++17 -Wall -Wextra -g internal_key_test.cpp internal_key.cpp -o internal_key_test
 ./internal_key_test
+```
 
 ---
 
