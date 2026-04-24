@@ -6,6 +6,7 @@
 #   make test         → build + run all test suites
 #   make arena        → build ArenaAllocator only
 #   make skiplist     → build SkipList (+ Arena dependency) only
+#   make memtable     → build MemTable (+ all dependencies) only
 #   make clean        → remove all build artifacts
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -14,9 +15,9 @@ ifeq ($(OS),Windows_NT)
     MAKE := mingw32-make
 endif
 
-.PHONY: all test arena skiplist clean
+.PHONY: all test arena skiplist memtable clean
 
-all: arena skiplist internalkey
+all: arena skiplist memtable
 
 arena:
 	$(MAKE) -C ArenaAllocator
@@ -24,7 +25,7 @@ arena:
 skiplist:
 	$(MAKE) -C SkipList
 
-internalkey:
+memtable:
 	$(MAKE) -C MemTable
 
 test: all
@@ -42,10 +43,11 @@ test: all
 
 	@echo ""
 	@echo "======================================"
-	@echo "  Running InternalKey tests"
+	@echo "  Running MemTable tests"
 	@echo "======================================"
 	$(MAKE) -C MemTable test
-	
+
 clean:
 	$(MAKE) -C ArenaAllocator clean
 	$(MAKE) -C SkipList clean
+	$(MAKE) -C MemTable clean
