@@ -24,6 +24,7 @@
 // Read path:
 //   Get()    → seeks to (row, col, INT64_MAX, kTypeValue) and returns
 //              the newest entry for that (row, col) pair
+//   Iterator → walks every entry in sorted order (used by compaction)
 //
 // Size tracking:
 //   ApproximateSize() returns Arena memory usage.
@@ -52,12 +53,63 @@ enum class GetResult {
 // ── Memtable ──────────────────────────────────────────────────────────────────
 class Memtable {
 public:
+
+    // Public type alias for the underlying SkipList.
+    // Exposed so that Iterator can reference Table::Iterator.
+    // Do not depend on this type externally — it is an implementation detail
+    // that may change when the underlying data structure is replaced.
+    using Table = SkipList<InternalKey, std::string, InternalKeyComparator>;
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
     Memtable();
     ~Memtable() = default;
 
     // Non-copyable — owns Arena and SkipList
     Memtable(const Memtable&)            = delete;
     Memtable& operator=(const Memtable&) = delete;
+
+    // ── Iterator ──────────────────────────────────────────────────────────────
+    // Walks every entry in the Memtable in sorted order:
+    //   row ASC → col ASC → timestamp DESC → type DESC
+    //
+    // Used by minor compaction to read all entries and write them
+    // sequentially to an SSTable. Also used for range scans.
+    //
+    // Usage:
+    //   Memtable::Iterator it = mem.NewIterator();
+    //   for (it.SeekToFirst(); it.Valid(); it.Next()) {
+    //       it.key();    // InternalKey
+    //       it.value();  // std::string
+    //   }
+    class Iterator {
+    public:
+        explicit Iterator(const Memtable* mem);
+
+        // Returns true if the iterator is positioned at a valid entry.
+        bool Valid() const;
+
+        // Returns the key at the current position. Requires Valid().
+        const InternalKey& key() const;
+
+        // Returns the value at the current position. Requires Valid().
+        const std::string& value() const;
+
+        // Advance to the next entry. Requires Valid().
+        void Next();
+
+        // Position at the first entry in the Memtable.
+        void SeekToFirst();
+
+        // Position at the first entry with key >= target.
+        void Seek(const InternalKey& target);
+
+    private:
+        Table::Iterator iter_;
+    };
+
+    // Returns an iterator over this Memtable.
+    Iterator NewIterator() const;
 
     // ── Write interface ───────────────────────────────────────────────────────
 
@@ -97,8 +149,6 @@ public:
     size_t ApproximateSize() const;
 
 private:
-    // Internal SkipList type alias for readability
-    using Table = SkipList<InternalKey, std::string, InternalKeyComparator>;
 
     Arena  arena_;   // owns all node memory
     Table  table_;   // sorted store; uses arena_
