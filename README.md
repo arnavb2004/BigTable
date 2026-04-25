@@ -17,17 +17,20 @@ BigTable/
 │   ├── arena.cpp
 │   ├── arena_test.cpp
 │   └── Makefile
-|── SkipList/
-|    ├── skiplist.hpp
-|    ├── skiplist.ipp           ← template implementation (#included by .hpp)
-|    ├── skiplist_test.cpp
-|    └── Makefile
-└── MemTable/
-    ├── internal_key.hpp       ← cell identity, sort order, encode/decode
-    ├── internal_key.cpp
-    ├── internal_key_test.cpp
-    └── Makefile
-└── Readme.md
+├── SkipList/
+│   ├── skiplist.hpp
+│   ├── skiplist.ipp           ← template implementation (#included by .hpp)
+│   ├── skiplist_test.cpp
+│   └── Makefile
+├── MemTable/
+│   ├── internal_key.hpp       ← cell identity, sort order, encode/decode
+│   ├── internal_key.cpp
+│   ├── internal_key_test.cpp
+│   ├── memtable.hpp           ← in-memory write buffer
+│   ├── memtable.cpp
+│   ├── memtable_test.cpp
+│   └── Makefile
+└── README.md
 ```
 
 ---
@@ -104,6 +107,27 @@ disk.
 [row_size : 4B big-endian][row][col_size : 4B big-endian][col][~timestamp : 8B big-endian][~type : 1B]
 ```
 
+### 4. Memtable (in-memory write buffer)
+
+The public write/read interface for a Bigtable tablet. Wraps the SkipList and
+Arena behind a clean `Put / Delete / Get` API. Callers never interact with
+the SkipList or Arena directly — both are internal implementation details,
+swappable without changing the public interface.
+
+| Property | Detail |
+|---|---|
+| Write path | `Put` / `Delete` → inserts into SkipList |
+| Read path | `Get` → seeks to newest version of `(row, col)` |
+| Versioning | Every `Put` creates a new version; `Get` always returns newest |
+| Tombstones | `Delete` inserts a `kTypeDeletion` marker; pruned at compaction |
+| Iterator | Walks all entries in sorted order — used by minor compaction |
+| Size tracking | `ApproximateSize()` → Arena usage; Tablet uses this to decide when to flush |
+| Thread safety | Same contract as SkipList — writes serialised by caller, reads lock-free |
+
+**Ownership model:** Memtable owns its Arena and SkipList. The underlying data
+structure is an implementation detail — replacing the SkipList with a B-tree
+or adding a Bloom filter requires no changes to the public interface.
+
 ---
 
 ## Building
@@ -143,14 +167,19 @@ g++ -std=c++17 -Wall -Wextra -g arena_test.cpp arena.cpp -o arena_test
 
 # SkipList tests
 cd SkipList
-g++ -std=c++17 -Wall -Wextra -g skiplist_test.cpp ../ArenaAllocator/arena.cpp -o skiplist_test
+g++ -std=c++17 -Wall -Wextra -g -lpthread skiplist_test.cpp ../ArenaAllocator/arena.cpp -o skiplist_test
 ./skiplist_test        # Linux/macOS
-skiplist_test.exe      # Windows (add -lpthread to the command above)
+skiplist_test.exe      # Windows
 
-# InternalKey tests (inside MemTable folder)
+# InternalKey tests
 cd MemTable
 g++ -std=c++17 -Wall -Wextra -g internal_key_test.cpp internal_key.cpp -o internal_key_test
 ./internal_key_test
+
+# Memtable tests
+cd MemTable
+g++ -std=c++17 -Wall -Wextra -g memtable_test.cpp memtable.cpp internal_key.cpp ../ArenaAllocator/arena.cpp -o memtable_test
+./memtable_test
 ```
 
 ---
@@ -193,6 +222,21 @@ g++ -std=c++17 -Wall -Wextra -g internal_key_test.cpp internal_key.cpp -o intern
 | DecodeRobustness | 4 | Truncated buffers, garbage stress, negative timestamps |
 | ComparatorProperties | 4 | Transitivity, reflexivity, symmetry, row dominance |
 
+### Memtable
+
+| Suite | Tests | What it covers |
+|---|---|---|
+| Basic | 6 | Put/Get, missing row/col, empty and large values |
+| Delete | 5 | Tombstone only, delete after put, put after delete, isolation |
+| Versioning | 4 | Newest version returned, all versions in iterator, out-of-order timestamps, upsert |
+| MultiColumn | 2 | Independent cols, Bigtable-style column families |
+| MultiRow | 3 | Independent rows |
+| Iterator | 7 | Empty list, traversal order, timestamp descending, tombstones visible, seek, full count |
+| Size | 4 | Non-zero at construction, growth, never shrinks |
+| Boundary | 6 | Empty row/col, INT64 MIN/MAX, long keys, negative timestamps |
+| Stress | 3 | 1000 rows, 500 versions, iterator count |
+| GroundTruth | 2 | 500 random ops verified live against std::map; 1000 ops final state verified |
+
 ---
 
 ## Roadmap
@@ -202,7 +246,7 @@ Implementing the paper bottom-up:
 - [x] Arena allocator
 - [x] SkipList (MemTable backbone)
 - [x] InternalKey — cell identity, sort order, encode/decode for WAL + SSTable
-- [ ] Memtable — wraps SkipList with a `(row, col, timestamp)` composite key interface; lives in `MemTable/`
+- [x] Memtable — in-memory write buffer with Put/Delete/Get/Iterator interface
 - [ ] SSTable — immutable on-disk sorted file with block index and Bloom filter
 - [ ] Commit log — append-only WAL, one per tablet server
 - [ ] Tablet — owns one Memtable + a list of SSTables; handles the read/write path
