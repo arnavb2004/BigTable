@@ -467,6 +467,138 @@ TEST(Stress, iterator_count_matches_inserts) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Suite 9: Ground-truth stress
+//
+// Runs a random sequence of Put, Delete, and Get operations against the
+// Memtable and verifies every Get result against a ground-truth std::map.
+//
+// The map tracks the expected state of each (row, col):
+//   - present + value  → kFound
+//   - present + ""     → kDeleted (tombstone)
+//   - absent           → kNotFound
+//
+// This catches bugs in tombstone shadowing, version selection, and the
+// seek-based Get logic that targeted tests might miss.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#include <map>
+#include <utility>
+#include <random>
+
+TEST(GroundTruth, random_put_delete_get_matches_map) {
+    Memtable mem;
+
+    // Ground truth:
+    //   key        = (row, col)
+    //   value      = actual value string  (empty string = tombstone)
+    //   second bool = true if deleted, false if live
+    struct State {
+        std::string value;
+        bool deleted = false;
+    };
+    std::map<std::pair<std::string,std::string>, State> truth;
+
+    std::mt19937 rng(42);  // fixed seed for reproducibility
+    auto rand_int  = [&](int lo, int hi) {
+        return std::uniform_int_distribution<int>(lo, hi)(rng);
+    };
+
+    const int NUM_ROWS = 20;
+    const int NUM_COLS = 5;
+    const int OPS      = 2000;
+
+    int64_t ts = 1;  // monotonically increasing timestamp
+
+    for (int op = 0; op < OPS; ++op) {
+        std::string row = "row" + std::to_string(rand_int(0, NUM_ROWS - 1));
+        std::string col = "col" + std::to_string(rand_int(0, NUM_COLS - 1));
+        auto key = std::make_pair(row, col);
+
+        int action = rand_int(0, 2);  // 0=Put, 1=Delete, 2=Get
+
+        if (action == 0) {
+            // Put
+            std::string val = "v" + std::to_string(op);
+            mem.Put(row, col, ts++, val);
+            truth[key] = {val, false};
+
+        } else if (action == 1) {
+            // Delete
+            mem.Delete(row, col, ts++);
+            truth[key] = {"", true};
+
+        } else {
+            // Get — verify against ground truth
+            std::string out;
+            GetResult result = mem.Get(row, col, out);
+
+            auto it = truth.find(key);
+            if (it == truth.end()) {
+                // Never written — must be kNotFound
+                EXPECT_EQ(result, GetResult::kNotFound);
+            } else if (it->second.deleted) {
+                // Last write was a tombstone — must be kDeleted
+                EXPECT_EQ(result, GetResult::kDeleted);
+            } else {
+                // Last write was a Put — must be kFound with correct value
+                EXPECT_EQ(result, GetResult::kFound);
+                EXPECT_EQ(out, it->second.value);
+            }
+        }
+    }
+}
+
+TEST(GroundTruth, all_final_states_correct_after_mixed_ops) {
+    // After 1000 mixed operations, verify the final state of every
+    // (row, col) pair matches what the ground truth map says.
+    Memtable mem;
+
+    struct State {
+        std::string value;
+        bool deleted = false;
+    };
+    std::map<std::pair<std::string,std::string>, State> truth;
+
+    std::mt19937 rng(123);
+    auto rand_int = [&](int lo, int hi) {
+        return std::uniform_int_distribution<int>(lo, hi)(rng);
+    };
+
+    const int NUM_ROWS = 15;
+    const int NUM_COLS = 4;
+    const int OPS      = 1000;
+    int64_t ts = 1;
+
+    // Run only Puts and Deletes — no Gets yet
+    for (int op = 0; op < OPS; ++op) {
+        std::string row = "row" + std::to_string(rand_int(0, NUM_ROWS - 1));
+        std::string col = "col" + std::to_string(rand_int(0, NUM_COLS - 1));
+        auto key = std::make_pair(row, col);
+
+        if (rand_int(0, 1) == 0) {
+            std::string val = "val" + std::to_string(op);
+            mem.Put(row, col, ts++, val);
+            truth[key] = {val, false};
+        } else {
+            mem.Delete(row, col, ts++);
+            truth[key] = {"", true};
+        }
+    }
+
+    // Now verify every (row, col) in the ground truth map
+    std::string out;
+    for (auto& [key, state] : truth) {
+        GetResult result = mem.Get(key.first, key.second, out);
+        if (state.deleted) {
+            EXPECT_EQ(result, GetResult::kDeleted);
+        } else {
+            EXPECT_EQ(result, GetResult::kFound);
+            EXPECT_EQ(out, state.value);
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 int main() {
