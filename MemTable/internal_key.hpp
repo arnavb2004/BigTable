@@ -7,7 +7,8 @@
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Defines the Bigtable key schema — the WHAT layer.
-// Knows nothing about SkipList, Arena, or Memtable.
+// Knows nothing about SkipList, Arena, Memtable, or SSTable.
+// Owns the key schema and lookup result type used by all storage layers.
 //
 // Every cell in Bigtable is identified by:
 //   (row, column_family:qualifier, timestamp, type)
@@ -28,6 +29,18 @@
 enum ValueType : uint8_t {
     kTypeDeletion = 0,
     kTypeValue    = 1
+};
+
+
+// ── GetResult ─────────────────────────────────────────────────────────────────
+// Returned by Get() to distinguish three cases:
+//   kFound   — a live value exists for (row, col)
+//   kDeleted — the newest entry is a tombstone (cell was deleted)
+//   kNotFound — no entry exists for (row, col)
+enum class GetResult {
+    kFound,
+    kDeleted,
+    kNotFound
 };
 
 

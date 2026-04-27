@@ -38,18 +38,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 
-// ── GetResult ─────────────────────────────────────────────────────────────────
-// Returned by Get() to distinguish three cases:
-//   kFound   — a live value exists for (row, col)
-//   kDeleted — the newest entry is a tombstone (cell was deleted)
-//   kNotFound — no entry exists for (row, col) in this Memtable
-enum class GetResult {
-    kFound,
-    kDeleted,
-    kNotFound
-};
-
-
 // ── Memtable ──────────────────────────────────────────────────────────────────
 class Memtable {
 public:
