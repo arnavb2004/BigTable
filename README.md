@@ -12,6 +12,8 @@ petabytes across thousands of commodity servers.
 ```
 BigTable/
 ├── Makefile                  ← root orchestrator (build + test everything)
+├── utils/
+│   └── constants.hpp         ← project-wide tunables (block sizes, thresholds, sentinel values)
 ├── ArenaAllocator/
 │   ├── arena.hpp
 │   ├── arena.cpp
@@ -37,7 +39,27 @@ BigTable/
 
 ## Components
 
-### 1. Arena allocator
+### 1. Utils
+
+A shared header layer that centralises project-wide tunables and named
+constants. No component hardcodes magic values — all tunables are pulled
+from here so a single change propagates automatically.
+
+| Constant | Value | Used by |
+|---|---|---|
+| `kArenaBlockSize` | 4096 | Arena |
+| `kSkipListMaxHeight` | 12 | SkipList |
+| `kSkipListBranchProb` | 0.25 | SkipList |
+| `kMinEncodedKeySize` | 17 | InternalKey::Decode |
+| `kMaxTimestamp` | INT64_MAX | Memtable::Get seek sentinel |
+| `kMemtableFlushThreshold` | 64 MB | Tablet (upcoming) |
+| `kSSTableBlockSize` | 4096 | SSTable (upcoming) |
+| `kSSTableTargetFileSize` | 2 MB | Compactor (upcoming) |
+
+All constants live in `namespace bigtable` and are declared `inline constexpr`
+to avoid ODR violations when included from multiple translation units.
+
+### 2. Arena allocator
 
 A slab-based memory manager designed for high-frequency, small-object
 allocations with minimal overhead — the same strategy used by LevelDB and
@@ -45,18 +67,18 @@ RocksDB for their MemTable nodes.
 
 | Property | Detail |
 |---|---|
-| Block size | 4 KB (one OS page) |
+| Block size | `kArenaBlockSize` (4 KB — one OS page) |
 | Allocation strategy | Bump-pointer — O(1) per allocation |
 | Alignment | 8-byte guaranteed (`AllocateAligned`) |
 | Memory tracking | `std::atomic<size_t>` counter — no mutex needed |
-| Huge objects | Objects > 1 KB get a dedicated block |
+| Huge objects | Objects > `kArenaBlockSize / 4` get a dedicated block |
 
 Nodes that don't fit in the current block trigger a fresh 4 KB allocation;
 objects larger than 1/4 of the block size get their own dedicated allocation.
 The Arena owns all memory and frees it in bulk on destruction — there is no
 per-node `delete`.
 
-### 2. SkipList (MemTable backbone)
+### 3. SkipList (MemTable backbone)
 
 A probabilistic sorted data structure that serves as the in-memory write
 buffer (MemTable) for each tablet. Modelled directly on the LevelDB SkipList.
@@ -64,8 +86,8 @@ buffer (MemTable) for each tablet. Modelled directly on the LevelDB SkipList.
 | Property | Detail |
 |---|---|
 | Key order | Strictly ascending by comparator |
-| Max height | 12 levels |
-| Promotion probability | P = 0.25 per level |
+| Max height | `kSkipListMaxHeight` (12 levels) |
+| Promotion probability | `kSkipListBranchProb` (P = 0.25 per level) |
 | Search complexity | O(log N) expected |
 | Write concurrency | Single writer — caller must hold a mutex |
 | Read concurrency | Lock-free — multiple concurrent readers are safe |
@@ -81,7 +103,7 @@ SkipList natively handles Bigtable-style keys
 `(row, column_family:qualifier, timestamp)` where timestamps sort in
 descending order so the newest version is always returned first.
 
-### 3. InternalKey (key schema layer)
+### 4. InternalKey (key schema layer)
 
 Defines the Bigtable cell identity and sort order. Every cell is uniquely
 identified by four fields: `(row, col, timestamp, type)`. This layer sits
@@ -107,7 +129,10 @@ disk.
 [row_size : 4B big-endian][row][col_size : 4B big-endian][col][~timestamp : 8B big-endian][~type : 1B]
 ```
 
-### 4. Memtable (in-memory write buffer)
+Minimum encoded size is `kMinEncodedKeySize` (17 bytes), used as the first
+bounds check in `Decode()`.
+
+### 5. Memtable (in-memory write buffer)
 
 The public write/read interface for a Bigtable tablet. Wraps the SkipList and
 Arena behind a clean `Put / Delete / Get` API. Callers never interact with
@@ -117,11 +142,12 @@ swappable without changing the public interface.
 | Property | Detail |
 |---|---|
 | Write path | `Put` / `Delete` → inserts into SkipList |
-| Read path | `Get` → seeks to newest version of `(row, col)` |
+| Read path | `Get` → seeks to `kMaxTimestamp` version of `(row, col)` |
 | Versioning | Every `Put` creates a new version; `Get` always returns newest |
 | Tombstones | `Delete` inserts a `kTypeDeletion` marker; pruned at compaction |
 | Iterator | Walks all entries in sorted order — used by minor compaction |
 | Size tracking | `ApproximateSize()` → Arena usage; Tablet uses this to decide when to flush |
+| Flush threshold | `kMemtableFlushThreshold` (64 MB) — checked by Tablet (upcoming) |
 | Thread safety | Same contract as SkipList — writes serialised by caller, reads lock-free |
 
 **Ownership model:** Memtable owns its Arena and SkipList. The underlying data
@@ -247,6 +273,7 @@ Implementing the paper bottom-up:
 - [x] SkipList (MemTable backbone)
 - [x] InternalKey — cell identity, sort order, encode/decode for WAL + SSTable
 - [x] Memtable — in-memory write buffer with Put/Delete/Get/Iterator interface
+- [x] Utils — project-wide constants (`kArenaBlockSize`, `kSkipListMaxHeight`, `kMemtableFlushThreshold`, etc.)
 - [ ] SSTable — immutable on-disk sorted file with block index and Bloom filter
 - [ ] Commit log — append-only WAL, one per tablet server
 - [ ] Tablet — owns one Memtable + a list of SSTables; handles the read/write path
