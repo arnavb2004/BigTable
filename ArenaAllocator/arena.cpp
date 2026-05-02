@@ -1,6 +1,5 @@
 #include "arena.hpp"
-
-static const int kBlockSize = 4096; // Standard 4KB page size
+#include "../utils/constants.hpp"
 
 Arena::Arena() 
     : alloc_ptr_(nullptr), 
@@ -36,13 +35,13 @@ char* Arena::AllocateFallback(size_t bytes) {
     Else we start a new standard arena and allocate memory accordingly.
     
     bytes : The number of bytes that didn't fit in the previous block */
-    if (bytes > kBlockSize / 4) {
+    if (bytes > bigtable::kArenaBlockSize / 4) {
         // Object is huge, allocate a dedicated block for it
         return AllocateNewBlock(bytes);
     }
     // Otherwise, start a fresh standard-sized block
-    alloc_ptr_ = AllocateNewBlock(kBlockSize);
-    alloc_bytes_remaining_ = kBlockSize;
+    alloc_ptr_ = AllocateNewBlock(bigtable::kArenaBlockSize);
+    alloc_bytes_remaining_ = bigtable::kArenaBlockSize;
 
     char* result = alloc_ptr_;
     alloc_ptr_ += bytes;

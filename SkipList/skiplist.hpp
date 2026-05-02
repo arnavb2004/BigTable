@@ -2,6 +2,7 @@
 #define SKIPLIST_HPP
 
 #include "../ArenaAllocator/arena.hpp"
+#include "../utils/constants.hpp"
 #include <atomic>
 #include <cassert>
 #include <cstdlib>
@@ -103,9 +104,10 @@ public:
     };
 
 private:
-    // ── Constants ────────────────────────────────────────────────────────────
-    static constexpr int   kMaxHeight  = 12;
-    static constexpr float kBranchProb = 0.25f;  // P(promote to next level)
+    // Pull tunables from the shared constants header.
+    static constexpr int   kMaxHeight  = bigtable::kSkipListMaxHeight;
+    static constexpr float kBranchProb = bigtable::kSkipListBranchProb;
+
 
     // ── Members ──────────────────────────────────────────────────────────────
     Comparator      const compare_;
@@ -145,4 +147,4 @@ private:
 };
 
 #include "skiplist.ipp"
-#endif // SKIPLIST_HPP
+#endif

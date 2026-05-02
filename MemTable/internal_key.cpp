@@ -1,4 +1,5 @@
 #include "internal_key.hpp"
+#include "../utils/constants.hpp"
 #include <cstring>  // memcpy
 #include <string_view>
 
@@ -87,7 +88,7 @@ bool InternalKey::Decode(const std::string_view encoded, InternalKey& out) {
     size_t pos = 0;
  
     // Minimum size: 4 (row_size) + 0 (row) + 4 (col_size) + 0 (col) + 8 (ts) + 1 (type)
-    if (len < 17) return false;
+    if (len < bigtable::kMinEncodedKeySize) return false;
  
     // Helper lambda: read big-endian value of type T
     auto read_be = [&]<typename T>() -> T {

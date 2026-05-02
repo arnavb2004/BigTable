@@ -1,4 +1,5 @@
 #include "memtable.hpp"
+#include "../utils/constants.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Implements the Memtable write and read interface.
@@ -44,7 +45,7 @@ void Memtable::Delete(const std::string& row,
 
 
 // ── Get ───────────────────────────────────────────────────────────────────────
-// Seeks to (row, col, INT64_MAX, kTypeValue) — the highest possible key for
+// Seeks to (row, col,  kMaxTimestamp, kTypeValue) — the highest possible key for
 // that (row, col) pair. Because timestamps sort descending, the first entry
 // the iterator lands on is always the newest version.
 //
@@ -57,9 +58,9 @@ GetResult Memtable::Get(const std::string& row,
                         std::string&       value_out) const
 {
     // Construct a seek key at the very top of the (row, col) range.
-    // INT64_MAX timestamp + kTypeValue ensures we land at or before
+    // kMaxTimestamp + kTypeValue ensures we land at or before
     // the newest real entry for this (row, col).
-    InternalKey seek_key(row, col, INT64_MAX, kTypeValue);
+    InternalKey seek_key(row, col, bigtable::kMaxTimestamp, kTypeValue);
 
     Table::Iterator iter(&table_);
     iter.Seek(seek_key);
