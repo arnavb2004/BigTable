@@ -48,6 +48,38 @@ inline constexpr int64_t kMaxTimestamp = INT64_MAX;
 // 64 MB matches the LevelDB default; tune based on available RAM per tablet.
 inline constexpr size_t kMemtableFlushThreshold = 64 * 1024 * 1024;
 
+// ── SSTable ───────────────────────────────────────────────────────────────────
+
+// Target size for each data block before compression.
+// 4KB = one OS page; keeps read amplification low.
+inline constexpr size_t   kSSTableBlockSize         = 4 * 1024;
+
+// Number of entries between full-key restart points within a block.
+// 8 is optimal for Bigtable-style keys with long shared prefixes.
+inline constexpr int      kRestartInterval          = 8;
+
+// Bloom filter tuning — 10 bits/key + 7 hash functions → ~1% false positive rate.
+inline constexpr int      kBloomBitsPerKey          = 10;
+inline constexpr int      kBloomNumHashes           = 7;
+
+// Footer is always 28 bytes at the end of every SSTable file.
+//   index_offset : 8B
+//   index_size   : 4B
+//   num_blocks   : 4B
+//   magic        : 8B
+//   version      : 4B
+inline constexpr size_t   kFooterSize               = 28;
+
+// Sanity marker written into every footer. Detects truncated/corrupt files.
+inline constexpr uint64_t kSSTableMagic             = 0xCAFEBABEDEADBEEFULL;
+
+// Current on-disk format version. Bump when the layout changes.
+inline constexpr uint32_t kSSTableVersion           = 1;
+
+// Target SSTable file size — matches kMemtableFlushThreshold so one Memtable
+// flush produces one SSTable. Compactor uses this for output file boundaries.
+inline constexpr size_t   kSSTableTargetFileSize    = 64 * 1024 * 1024;  // 64 MB
+
 }
 
 #endif
