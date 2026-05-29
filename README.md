@@ -32,6 +32,11 @@ BigTable/
 │   ├── memtable.cpp
 │   ├── memtable_test.cpp
 │   └── Makefile
+├── SSTable/
+│   ├── sstable.hpp            ← writer, reader, bloom filter, footer, block handle
+│   ├── sstable.cpp
+│   ├── sstable_test.cpp
+│   └── Makefile
 └── README.md
 ```
 
@@ -53,8 +58,14 @@ from here so a single change propagates automatically.
 | `kMinEncodedKeySize` | 17 | InternalKey::Decode |
 | `kMaxTimestamp` | INT64_MAX | Memtable::Get seek sentinel |
 | `kMemtableFlushThreshold` | 64 MB | Tablet (upcoming) |
-| `kSSTableBlockSize` | 4096 | SSTable (upcoming) |
-| `kSSTableTargetFileSize` | 2 MB | Compactor (upcoming) |
+| `kSSTableBlockSize` | 4096 | SSTable |
+| `kRestartInterval` | 8 | SSTable |
+| `kBloomBitsPerKey` | 10 | SSTable BloomFilter |
+| `kBloomNumHashes` | 7 | SSTable BloomFilter |
+| `kFooterSize` | 28 | SSTable |
+| `kSSTableMagic` | 0xCAFEBABEDEADBEEF | SSTable |
+| `kSSTableVersion` | 1 | SSTable |
+| `kSSTableTargetFileSize` | 64 MB | Compactor (upcoming) |
 
 All constants live in `namespace bigtable` and are declared `inline constexpr`
 to avoid ODR violations when included from multiple translation units.
@@ -154,6 +165,92 @@ swappable without changing the public interface.
 structure is an implementation detail — replacing the SkipList with a B-tree
 or adding a Bloom filter requires no changes to the public interface.
 
+### 6. SSTable (immutable on-disk sorted file)
+
+An SSTable is the on-disk representation of a frozen Memtable. Once written
+it is never modified — the compactor produces new SSTables by merging existing
+ones, never editing them. Implemented as a matched `sstable.hpp` / `sstable.cpp`
+pair using the pimpl pattern to keep the public interface stable.
+
+**On-disk layout:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  Data Block 0        (Snappy-compressed¹)                │
+│  Filter Block 0      (Bloom filter for Data Block 0)     │
+│  Data Block 1        (Snappy-compressed¹)                │
+│  Filter Block 1      (Bloom filter for Data Block 1)     │
+│  ...                                                     │
+│  Index Block         (uncompressed, one entry per block) │
+│  Footer              (fixed 28 bytes, always last)       │
+└──────────────────────────────────────────────────────────┘
+```
+
+¹ Compression is a no-op placeholder with a Snappy-compatible swap-in interface.
+Swap two static functions in `sstable.cpp` to enable real compression.
+
+**Data block internal layout (before compression):**
+```
+Per entry:
+  [shared_len   : 4B BE]   bytes shared with previous restart-point key
+  [unshared_len : 4B BE]   bytes not shared (suffix appended to prefix)
+  [val_len      : 4B BE]
+  [key_delta    : unshared_len bytes]
+  [value        : val_len bytes]
+Trailer:
+  [restart_0 : 4B BE] ... [restart_k : 4B BE]
+  [num_restarts : 4B BE]
+```
+
+**Filter block layout:**
+```
+[bitset_size : 4B BE][bitset : bitset_size bytes][num_hashes : 1B]
+```
+
+**Index block layout:**
+```
+[num_entries : 4B BE]
+Per data block:
+  [last_key_size : 4B BE][last_key : last_key_size bytes]
+  [block_offset  : 8B BE]
+  [block_size    : 4B BE]
+  [filter_offset : 8B BE]
+  [filter_size   : 4B BE]
+```
+
+**Footer layout (always 28 bytes):**
+```
+[index_offset : 8B BE][index_size : 4B BE][num_blocks : 4B BE]
+[magic : 8B BE][version : 4B BE]
+```
+
+| Property | Detail |
+|---|---|
+| Block size | `kSSTableBlockSize` (4 KB — one OS page) |
+| Restart interval | 8 entries — one full key every 8 entries within a block |
+| Bloom filter key | `UserKey` (`row + '\0' + col`) — one filter entry covers all versions of a cell |
+| Index key type | Decoded `InternalKey` (not raw bytes) — enables `InternalKeyComparator` binary search |
+| Compression | No-op placeholder; Snappy-compatible interface for swap-in |
+| Footer magic | `0xCAFEBABEDEADBEEF` — detects truncated or corrupt files |
+| Writer | `SSTableWriter` — streaming; flushes block when uncompressed body exceeds `kSSTableBlockSize` |
+| Reader | `SSTableReader` — loads footer + index at open time; data blocks loaded on demand |
+| Iterator | Forward-only; decompresses one block at a time — does not hold all blocks in memory |
+
+**Read path for `Get(row, col)`:**
+1. Range check — if `row` outside `[smallest_key.row, largest_key.row]` → `kNotFound`
+2. `FindBlock()` — binary search index with `InternalKeyComparator`
+3. Bloom filter check — load filter block, probe with `UserKey(row, col)`
+4. `ReadDataBlock()` — decompress, decode restart-point prefix compression
+5. Linear scan from block start for first entry matching `(row, col)`
+
+**Production hardening:**
+- `std::streamoff` overflow guard in `ReadAt` — safe on 32-bit platforms
+- Footer version field validation — throws `std::runtime_error` with message containing `"version"` on mismatch
+- `num_blocks` sanity cap at `kSSTableTargetFileSize / kSSTableBlockSize` (16 384) — prevents runaway `reserve()` on corrupt index
+- `shared > current_key.size()` guard in `ReadDataBlock` — throws rather than producing garbage keys
+- Per-entry index bounds validation — data block and filter block extents checked against file size at open time
+- Overflow-safe arithmetic (`CheckedAdd`, `CheckedMul`, `NarrowToU32`, `ToStreamSize`) throughout write and read paths
+
 ---
 
 ## Building
@@ -176,6 +273,7 @@ make test
 make arena
 make skiplist
 make memtable
+make sstable
 
 # Clean all build artifacts
 make clean
@@ -206,6 +304,11 @@ g++ -std=c++17 -Wall -Wextra -g internal_key_test.cpp internal_key.cpp -o intern
 cd MemTable
 g++ -std=c++17 -Wall -Wextra -g memtable_test.cpp memtable.cpp internal_key.cpp ../ArenaAllocator/arena.cpp -o memtable_test
 ./memtable_test
+
+# SSTable tests
+cd SSTable
+g++ -std=c++17 -Wall -Wextra -g sstable_test.cpp sstable.cpp ../MemTable/memtable.cpp ../MemTable/internal_key.cpp ../ArenaAllocator/arena.cpp -o sstable_test
+./sstable_test
 ```
 
 ---
@@ -263,6 +366,25 @@ g++ -std=c++17 -Wall -Wextra -g memtable_test.cpp memtable.cpp internal_key.cpp 
 | Stress | 3 | 1000 rows, 500 versions, iterator count |
 | GroundTruth | 2 | 500 random ops verified live against std::map; 1000 ops final state verified |
 
+### SSTable
+
+| Suite | Tests | What it covers |
+|---|---|---|
+| Bloom | 5 | False negatives impossible, false positive rate < 5%, empty/corrupt filter safety, serialised size |
+| Footer | 3 | Encode/decode roundtrip, wrong magic rejected, wrong size rejected |
+| Writer | 4 | File creation, entry count tracking, file size growth, multi-block output |
+| Roundtrip | 7 | Single entry, missing key, tombstone, newest version, tombstone shadows older value, multi-row, Bigtable column families |
+| Metadata | 4 | Smallest/largest keys, file size nonzero, block count matches writer, `MayContain` present/absent |
+| Iterator | 4 | Forward scan order, Seek, Seek past end, entry count |
+| Integration | 2 | Memtable flush → SSTable roundtrip; 500-row flush, all keys readable |
+| Boundary | 5 | Empty row/col, INT64_MAX timestamp, empty value, 64KB value, corrupt footer throws |
+| GroundTruth | 1 | 1000 random Put/Delete ops flushed to SSTable, every entry verified against std::map |
+| IteratorBoundary | 3 | Restart-aligned block boundary, unaligned block boundary, value not corrupted across blocks |
+| FileValidation | 8 | Wrong footer version throws with `"version"` in message, correct version opens cleanly, implausible block count throws, plausible count opens cleanly, index offset past footer throws, data block offset outside file throws, corrupt shared prefix throws, truncated/empty file throws |
+| SeekPrecision | 5 | Seek before min lands on first entry, seek between blocks lands on correct block, seek to exact first entry of second block, seek past max is invalid, seek then Next walks remaining entries correctly |
+| CrossBlockVersions | 4 | Get returns newest when versions span two blocks, three blocks, tombstone in block 0 shadows value in block 1, iterator visits all versions in order |
+| DeltaCompression | 4 | Oscillating prefix length, shared prefix collapses to zero mid-group, deeply shared prefix with one-byte divergence, alternating long/short keys with no bleed |
+
 ---
 
 ## Roadmap
@@ -274,10 +396,11 @@ Implementing the paper bottom-up:
 - [x] InternalKey — cell identity, sort order, encode/decode for WAL + SSTable
 - [x] Memtable — in-memory write buffer with Put/Delete/Get/Iterator interface
 - [x] Utils — project-wide constants (`kArenaBlockSize`, `kSkipListMaxHeight`, `kMemtableFlushThreshold`, etc.)
-- [ ] SSTable — immutable on-disk sorted file with block index and Bloom filter
+- [x] SSTable — immutable on-disk sorted file with block index, Bloom filter, restart-point prefix compression, and production hardening
+- [ ] Minor compaction — Memtable → SSTable flush coordinated by Tablet
 - [ ] Commit log — append-only WAL, one per tablet server
 - [ ] Tablet — owns one Memtable + a list of SSTables; handles the read/write path
-- [ ] Compactor — minor (memtable → SSTable) and major (N SSTables → 1) compaction
+- [ ] Major compaction — N SSTables → 1 SSTable merge
 - [ ] Tablet server — gRPC server managing N tablets
 - [ ] METADATA table — 3-level B+ tree tablet location hierarchy
 - [ ] Master server — tablet assignment, load balancing, failure detection
