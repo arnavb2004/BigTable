@@ -295,8 +295,25 @@ public:
     size_t   NumBlocks()  const;   // data blocks flushed so far
 
 private:
-    struct Impl;
+    struct Impl{
+        std::ofstream   file_;
+        uint64_t        file_offset_  = 0;
+        uint64_t        num_entries_  = 0;
+
+        // Current block state
+        std::string              block_buf_;    // uncompressed entries so far
+        std::string              last_key_;     // encoded last key (for prefix compression)
+        int                      entry_count_  = 0;
+        std::vector<uint32_t>    restarts_;     // restart point offsets within block_buf_
+        std::unique_ptr<BloomFilter> bloom_;    // filter for current block
+
+        std::vector<BlockHandle> index_;        // one entry per flushed block
+        bool                     finished_     = false;
+    };
     std::unique_ptr<Impl> impl_;
+
+    void FlushBlock();
+    void WriteRaw(const std::string& data);
 };
 
 
@@ -327,6 +344,8 @@ public:
     // Opens the file at `path`, reads footer and index block into memory.
     // Throws std::runtime_error on I/O error or corrupt footer/index.
     explicit SSTableReader(const std::string& path);
+
+    ~SSTableReader();
 
     // Non-copyable — owns a file handle.
     SSTableReader(const SSTableReader&)            = delete;
@@ -403,12 +422,26 @@ public:
     Iterator NewIterator();
 
 private:
-    struct Impl;
+    struct Impl {
+        std::ifstream            file_;
+        uint64_t                 file_size_    = 0;
+        std::vector<BlockHandle> index_;
+        InternalKey              smallest_key_;
+        InternalKey              largest_key_;
+    };
     std::unique_ptr<Impl> impl_;
 
-    // Iterator needs access to Impl internals.
+    // Read `size` bytes from file at `offset` into out.
+    std::string ReadAt(uint64_t offset, uint32_t size);
+
+    // Decompress a data block and decode all its entries.
+    std::vector<std::pair<InternalKey, std::string>> ReadDataBlock(size_t block_idx);
+
+    // Binary search index to find the block that may contain (row, col, ts).
+    // Returns index_.size() if no block can contain the key.
+    size_t FindBlock(const InternalKey& seek_key) const;
+
     friend class Iterator;
 };
 
-
-#endif  // SSTABLE_HPP
+#endif

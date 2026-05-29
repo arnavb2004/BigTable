@@ -7,6 +7,7 @@
 #   make arena        → build ArenaAllocator only
 #   make skiplist     → build SkipList (+ Arena dependency) only
 #   make memtable     → build MemTable (+ all dependencies) only
+#   make sstable 	  → build SSTable (+ all dependencies) only
 #   make clean        → remove all build artifacts
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,9 @@ skiplist:
 memtable:
 	$(MAKE) -C MemTable
 
+sstable:
+	$(MAKE) -C SSTable
+
 test: all
 	@echo ""
 	@echo "======================================"
@@ -47,7 +51,14 @@ test: all
 	@echo "======================================"
 	$(MAKE) -C MemTable test
 
+	@echo ""
+	@echo "======================================"
+	@echo "  Running SSTable tests"
+	@echo "======================================"
+	$(MAKE) -C SSTable test
+
 clean:
 	$(MAKE) -C ArenaAllocator clean
 	$(MAKE) -C SkipList clean
 	$(MAKE) -C MemTable clean
+	$(MAKE) -C SSTable clean
